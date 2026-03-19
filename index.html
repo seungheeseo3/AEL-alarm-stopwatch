@@ -797,66 +797,74 @@ let alarmIdCounter = 0;
 let laps = [];
 let lastLapMs = 0;
 let ringingAlarms = new Set();
-let audioCtx = null;
 let alarmSoundTimer = null;
 
 // ─── Audio ───────────────────────────────────────────────────
-// AudioContext는 Android에서 미디어 볼륨 채널을 사용 → 무음모드에서도 소리남
-// iOS 하드웨어 무음 스위치는 웹앱으로 우회 불가 → 진동+시각 알람으로 보완
-function getCtx() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  // suspended 상태면 resume 시도
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  return audioCtx;
+// ★ Web Audio API(오실레이터) 완전 제거
+// Apple이 2023년 iOS Safari 업데이트로 Web Audio → 미디어채널 전환 워크어라운드 차단.
+// Web Audio API는 iOS 무음 모드에서 재생 불가 (우회 방법 없음).
+//
+// 해결: JS 수학 연산으로 사인파 WAV PCM 직접 생성 → Blob URL → <audio> 요소 재생.
+// <audio> 요소는 iOS 무음 모드에서도 동작하는 것이 검증된 방식.
+
+function buildAlarmWav() {
+  const sampleRate = 44100;
+  const pattern = [
+    [1046, 0.12, 0.9],
+    [784,  0.12, 0.9],
+    [1046, 0.12, 0.9],
+    [784,  0.12, 0.9],
+    [1318, 0.22, 1.0],
+    [0,    0.10, 0  ],
+  ];
+  const totalSamples = Math.ceil(
+    pattern.reduce((acc, [, dur]) => acc + dur, 0) * sampleRate
+  );
+  const wavBuf = new ArrayBuffer(44 + totalSamples * 2);
+  const view   = new DataView(wavBuf);
+  const w = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  w(0, 'RIFF');
+  view.setUint32( 4, 36 + totalSamples * 2, true);
+  w(8, 'WAVE'); w(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  w(36, 'data');
+  view.setUint32(40, totalSamples * 2, true);
+  let offset = 44;
+  pattern.forEach(([freq, dur, vol]) => {
+    const n = Math.ceil(dur * sampleRate);
+    for (let i = 0; i < n; i++) {
+      const fade   = Math.max(0, 1 - i / n);
+      const sample = freq > 0 ? Math.sin(2 * Math.PI * freq * i / sampleRate) * vol * fade : 0;
+      view.setInt16(offset, Math.max(-1, Math.min(1, sample)) * 0x7FFF, true);
+      offset += 2;
+    }
+  });
+  return new Blob([wavBuf], { type: 'audio/wav' });
 }
 
 function playBeep() {
   try {
-    const ctx = getCtx();
-    // 더 크고 주의를 끄는 패턴으로 변경
-    const pattern = [
-      { delay: 0,   freq: 1046, dur: 0.12 },
-      { delay: 140, freq: 784,  dur: 0.12 },
-      { delay: 280, freq: 1046, dur: 0.12 },
-      { delay: 420, freq: 784,  dur: 0.12 },
-      { delay: 560, freq: 1318, dur: 0.20 },
-    ];
-    pattern.forEach(({ delay, freq, dur }) => {
-      setTimeout(() => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        // 음량을 최대로
-        const compressor = ctx.createDynamicsCompressor();
-        o.connect(g);
-        g.connect(compressor);
-        compressor.connect(ctx.destination);
-        o.type = 'sine';
-        o.frequency.setValueAtTime(freq, ctx.currentTime);
-        g.gain.setValueAtTime(1.0, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-        o.start(ctx.currentTime);
-        o.stop(ctx.currentTime + dur);
-      }, delay);
-    });
+    const url = URL.createObjectURL(buildAlarmWav());
+    const el  = new Audio(url);
+    el.play().catch(() => {});
+    el.addEventListener('ended', () => URL.revokeObjectURL(url));
   } catch(e) {}
 }
 
-// 진동 패턴: 울림-쉬고-울림-쉬고-긴울림
 function vibrate() {
-  if ('vibrate' in navigator) {
-    navigator.vibrate([300, 150, 300, 150, 600]);
-  }
+  if ('vibrate' in navigator) navigator.vibrate([300, 150, 300, 150, 600]);
 }
 
 function startAlarmSound() {
   playBeep();
   vibrate();
-  alarmSoundTimer = setInterval(() => {
-    playBeep();
-    vibrate();
-  }, 2500);
+  alarmSoundTimer = setInterval(() => { playBeep(); vibrate(); }, 2500);
 }
 
 function stopAlarmSound() {
@@ -865,97 +873,7 @@ function stopAlarmSound() {
   if ('vibrate' in navigator) navigator.vibrate(0);
 }
 
-// ─── Formatting ──────────────────────────────────────────────
-const pad = n => String(n).padStart(2, '0');
-
-function formatTime(ms) {
-  const t = Math.floor(Math.max(ms, 0) / 1000);
-  return `${pad(Math.floor(t/3600))}:${pad(Math.floor((t%3600)/60))}:${pad(t%60)}`;
-}
-
-function formatMs(ms) {
-  return '.' + String(Math.floor(Math.max(ms,0)) % 1000).padStart(3,'0');
-}
-
-function msToLabel(ms) {
-  const t = Math.floor(ms / 1000);
-  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
-  const p = [];
-  if (h) p.push(`${h}시간`);
-  if (m) p.push(`${m}분`);
-  if (s || !p.length) p.push(`${s}초`);
-  return p.join(' ');
-}
-
-// ─── Timer ───────────────────────────────────────────────────
-function toggleStart() { running ? pause() : start(); }
-
-// ─── iOS 미디어 채널 언락 ────────────────────────────────────
-// iOS는 Web Audio API를 기본적으로 "링거(무음) 채널"에 연결해요.
-// 해결책: 무음 오디오를 <audio> 태그로 **루프 재생**하면
-// iOS가 미디어 세션을 활성 상태로 유지 → Web Audio도 미디어 채널로 전환.
-// 핵심은 "한 번 재생"이 아니라 "계속 루프"로 유지해야 한다는 점.
-// AudioContext로 무음 버퍼를 직접 생성 → Blob URL → loop 재생
-// (외부 파일/base64 불필요, 가장 안정적인 방법)
-
-let silentAudioEl = null;
-
-function createSilentAudioEl() {
-  if (silentAudioEl) return silentAudioEl;
-  try {
-    const ctx = getCtx();
-    // 0.5초짜리 무음 버퍼 생성
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
-    // WAV 파일로 인코딩
-    const numSamples = buf.length;
-    const wavBuf = new ArrayBuffer(44 + numSamples * 2);
-    const view = new DataView(wavBuf);
-    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-    writeStr(0, 'RIFF');
-    view.setUint32(4, 36 + numSamples * 2, true);
-    writeStr(8, 'WAVE');
-    writeStr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);       // PCM
-    view.setUint16(22, 1, true);       // 모노
-    view.setUint32(24, ctx.sampleRate, true);
-    view.setUint32(28, ctx.sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeStr(36, 'data');
-    view.setUint32(40, numSamples * 2, true);
-    // 샘플은 모두 0 (무음) — ArrayBuffer 기본값이 0이므로 별도 설정 불필요
-
-    const blob = new Blob([wavBuf], { type: 'audio/wav' });
-    const url = URL.createObjectURL(blob);
-
-    silentAudioEl = new Audio(url);
-    silentAudioEl.loop = true;
-    silentAudioEl.volume = 0;
-    // AirPlay 컨트롤에 표시되지 않도록
-    silentAudioEl.setAttribute('x-webkit-airplay', 'deny');
-  } catch(e) {}
-  return silentAudioEl;
-}
-
-function unlockIOSAudio() {
-  const el = createSilentAudioEl();
-  if (!el) return;
-  el.play().then(() => {
-    getCtx().resume();
-  }).catch(() => {});
-}
-
-function stopIOSAudio() {
-  if (silentAudioEl) {
-    silentAudioEl.pause();
-    silentAudioEl.currentTime = 0;
-  }
-}
-
 function start() {
-  unlockIOSAudio(); // ← 사용자 탭 이벤트 내에서 호출해야 iOS에서 동작
-  try { getCtx().resume(); } catch(e) {}
   running = true;
   wallStartTime = Date.now() - elapsed;
   if (useWorker) worker.postMessage('start');
@@ -983,7 +901,6 @@ function resetAll() {
   elapsed = 0; wallStartTime = 0; lastLapMs = 0;
   laps = []; ringingAlarms.clear();
   stopAlarmSound();
-  stopIOSAudio();
   alarms.forEach(a => a.triggered = false);
   document.getElementById('startBtn').innerHTML = '<span>▶ 시작</span>';
   document.getElementById('startBtn').classList.remove('active');
