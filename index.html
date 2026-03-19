@@ -157,6 +157,8 @@
     50% { opacity: 0.85; transform: scale(1.003); }
   }
 
+
+
   /* ── Main Display ───────────────────────────────────────── */
   .display-panel {
     background: var(--surface);
@@ -714,7 +716,7 @@
         </div>
         <div class="time-sep">:</div>
         <div>
-          <input class="time-field" id="alarmM" type="number" min="0" max="59" value="20">
+          <input class="time-field" id="alarmM" type="number" min="0" max="59" value="0">
           <div class="time-label">분</div>
         </div>
         <div class="time-sep">:</div>
@@ -799,30 +801,69 @@ let audioCtx = null;
 let alarmSoundTimer = null;
 
 // ─── Audio ───────────────────────────────────────────────────
+// AudioContext는 Android에서 미디어 볼륨 채널을 사용 → 무음모드에서도 소리남
+// iOS 하드웨어 무음 스위치는 웹앱으로 우회 불가 → 진동+시각 알람으로 보완
 function getCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // suspended 상태면 resume 시도
+  if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
 
 function playBeep() {
   try {
     const ctx = getCtx();
-    [0, 200, 400, 600, 800].forEach((delay, i) => {
+    // 더 크고 주의를 끄는 패턴으로 변경
+    const pattern = [
+      { delay: 0,   freq: 1046, dur: 0.12 },
+      { delay: 140, freq: 784,  dur: 0.12 },
+      { delay: 280, freq: 1046, dur: 0.12 },
+      { delay: 420, freq: 784,  dur: 0.12 },
+      { delay: 560, freq: 1318, dur: 0.20 },
+    ];
+    pattern.forEach(({ delay, freq, dur }) => {
       setTimeout(() => {
-        const o = ctx.createOscillator(), g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.frequency.setValueAtTime(i % 2 ? 660 : 880, ctx.currentTime);
-        o.frequency.exponentialRampToValueAtTime(i % 2 ? 880 : 660, ctx.currentTime + 0.15);
-        g.gain.setValueAtTime(0.35, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-        o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.18);
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        // 음량을 최대로
+        const compressor = ctx.createDynamicsCompressor();
+        o.connect(g);
+        g.connect(compressor);
+        compressor.connect(ctx.destination);
+        o.type = 'sine';
+        o.frequency.setValueAtTime(freq, ctx.currentTime);
+        g.gain.setValueAtTime(1.0, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        o.start(ctx.currentTime);
+        o.stop(ctx.currentTime + dur);
       }, delay);
     });
   } catch(e) {}
 }
 
-function startAlarmSound() { playBeep(); alarmSoundTimer = setInterval(playBeep, 2000); }
-function stopAlarmSound()  { clearInterval(alarmSoundTimer); alarmSoundTimer = null; }
+// 진동 패턴: 울림-쉬고-울림-쉬고-긴울림
+function vibrate() {
+  if ('vibrate' in navigator) {
+    navigator.vibrate([300, 150, 300, 150, 600]);
+  }
+}
+
+function startAlarmSound() {
+  playBeep();
+  vibrate();
+  alarmSoundTimer = setInterval(() => {
+    playBeep();
+    vibrate();
+  }, 2500);
+}
+
+function stopAlarmSound() {
+  clearInterval(alarmSoundTimer);
+  alarmSoundTimer = null;
+  if ('vibrate' in navigator) navigator.vibrate(0);
+}
 
 // ─── Formatting ──────────────────────────────────────────────
 const pad = n => String(n).padStart(2, '0');
@@ -849,7 +890,29 @@ function msToLabel(ms) {
 // ─── Timer ───────────────────────────────────────────────────
 function toggleStart() { running ? pause() : start(); }
 
+// ─── iOS 미디어 채널 언락 ────────────────────────────────────
+// iOS에서 Web Audio API는 기본적으로 "시스템 사운드 채널"로 라우팅되어
+// 무음 스위치에 막힘. <audio> 요소로 무음 오디오를 한 번 재생하면
+// iOS가 Web Audio API를 "미디어 채널"로 전환 → 무음 모드에서도 소리 남.
+let iosUnlocked = false;
+
+function unlockIOSAudio() {
+  if (iosUnlocked) return;
+  try {
+    // 0.1초짜리 무음 MP3 (base64) — 사용자 인터랙션 내에서 재생해야 동작
+    const silentMp3 = 'data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsgU291bmQgRWZmZWN0cyBMaWNlbnNlAFRYWFgAAAAhAAADaWQzMgB4aW5nAAAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+    const audio = new Audio(silentMp3);
+    audio.volume = 0;
+    audio.play().then(() => {
+      iosUnlocked = true;
+      // audio 재생 후 Web Audio API도 resume
+      getCtx().resume();
+    }).catch(() => {});
+  } catch(e) {}
+}
+
 function start() {
+  unlockIOSAudio(); // ← 사용자 탭 이벤트 내에서 호출해야 iOS에서 동작
   try { getCtx().resume(); } catch(e) {}
   running = true;
   wallStartTime = Date.now() - elapsed;
@@ -1073,7 +1136,7 @@ window.onload = () => {
     addAlarm();
   });
   document.getElementById('alarmH').value = 0;
-  document.getElementById('alarmM').value = 20;
+  document.getElementById('alarmM').value = 0;
   document.getElementById('alarmS').value = 0;
   document.getElementById('alarmLabel').value = '';
 };
