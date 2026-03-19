@@ -899,13 +899,12 @@ let iosUnlocked = false;
 function unlockIOSAudio() {
   if (iosUnlocked) return;
   try {
-    // 0.1초짜리 무음 MP3 (base64) — 사용자 인터랙션 내에서 재생해야 동작
-    const silentMp3 = 'data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsgU291bmQgRWZmZWN0cyBMaWNlbnNlAFRYWFgAAAAhAAADaWQzMgB4aW5nAAAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
-    const audio = new Audio(silentMp3);
+    // 검증된 44바이트 최소 무음 WAV (RIFF 헤더 + fmt 청크 + 빈 data 청크)
+    const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    const audio = new Audio(silentWav);
     audio.volume = 0;
     audio.play().then(() => {
       iosUnlocked = true;
-      // audio 재생 후 Web Audio API도 resume
       getCtx().resume();
     }).catch(() => {});
   } catch(e) {}
