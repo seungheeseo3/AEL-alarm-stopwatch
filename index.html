@@ -891,23 +891,66 @@ function msToLabel(ms) {
 function toggleStart() { running ? pause() : start(); }
 
 // ─── iOS 미디어 채널 언락 ────────────────────────────────────
-// iOS에서 Web Audio API는 기본적으로 "시스템 사운드 채널"로 라우팅되어
-// 무음 스위치에 막힘. <audio> 요소로 무음 오디오를 한 번 재생하면
-// iOS가 Web Audio API를 "미디어 채널"로 전환 → 무음 모드에서도 소리 남.
-let iosUnlocked = false;
+// iOS는 Web Audio API를 기본적으로 "링거(무음) 채널"에 연결해요.
+// 해결책: 무음 오디오를 <audio> 태그로 **루프 재생**하면
+// iOS가 미디어 세션을 활성 상태로 유지 → Web Audio도 미디어 채널로 전환.
+// 핵심은 "한 번 재생"이 아니라 "계속 루프"로 유지해야 한다는 점.
+// AudioContext로 무음 버퍼를 직접 생성 → Blob URL → loop 재생
+// (외부 파일/base64 불필요, 가장 안정적인 방법)
+
+let silentAudioEl = null;
+
+function createSilentAudioEl() {
+  if (silentAudioEl) return silentAudioEl;
+  try {
+    const ctx = getCtx();
+    // 0.5초짜리 무음 버퍼 생성
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+    // WAV 파일로 인코딩
+    const numSamples = buf.length;
+    const wavBuf = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(wavBuf);
+    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);       // PCM
+    view.setUint16(22, 1, true);       // 모노
+    view.setUint32(24, ctx.sampleRate, true);
+    view.setUint32(28, ctx.sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+    // 샘플은 모두 0 (무음) — ArrayBuffer 기본값이 0이므로 별도 설정 불필요
+
+    const blob = new Blob([wavBuf], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+
+    silentAudioEl = new Audio(url);
+    silentAudioEl.loop = true;
+    silentAudioEl.volume = 0;
+    // AirPlay 컨트롤에 표시되지 않도록
+    silentAudioEl.setAttribute('x-webkit-airplay', 'deny');
+  } catch(e) {}
+  return silentAudioEl;
+}
 
 function unlockIOSAudio() {
-  if (iosUnlocked) return;
-  try {
-    // 검증된 44바이트 최소 무음 WAV (RIFF 헤더 + fmt 청크 + 빈 data 청크)
-    const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    const audio = new Audio(silentWav);
-    audio.volume = 0;
-    audio.play().then(() => {
-      iosUnlocked = true;
-      getCtx().resume();
-    }).catch(() => {});
-  } catch(e) {}
+  const el = createSilentAudioEl();
+  if (!el) return;
+  el.play().then(() => {
+    getCtx().resume();
+  }).catch(() => {});
+}
+
+function stopIOSAudio() {
+  if (silentAudioEl) {
+    silentAudioEl.pause();
+    silentAudioEl.currentTime = 0;
+  }
 }
 
 function start() {
@@ -940,6 +983,7 @@ function resetAll() {
   elapsed = 0; wallStartTime = 0; lastLapMs = 0;
   laps = []; ringingAlarms.clear();
   stopAlarmSound();
+  stopIOSAudio();
   alarms.forEach(a => a.triggered = false);
   document.getElementById('startBtn').innerHTML = '<span>▶ 시작</span>';
   document.getElementById('startBtn').classList.remove('active');
