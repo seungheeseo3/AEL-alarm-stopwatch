@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AEL Alarm Stopwatch</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Noto+Sans+KR:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  /*
+   * 색상 역할 배분
+   * #CCDCDB — 배경 (연한 민트 그레이, 눈에 편안)
+   * #F2F7F6 — 패널 표면 (배경보다 밝은 흰빛, 레이어 분리)
+   * #A1D8B5 — 테두리 / 구분선 / 서브 강조
+   * #4CB572 — 주요 인터랙션 / 버튼 호버 / 중간 강조
+   * #135E4B — 헤더 / 핵심 텍스트 / 주 강조색 (가장 짙은 포인트)
+   */
+  :root {
+    --bg:           #CCDCDB;
+    --surface:      #F2F7F6;
+    --border:       #A1D8B5;
+    --border-mid:   #7DC49A;
+    --accent:       #135E4B;   /* 짙은 포레스트 그린 */
+    --accent-mid:   #4CB572;   /* 활성/인터랙션 */
+    --accent-light: #A1D8B5;   /* 서브 강조 */
+    --text:         #135E4B;   /* 주 텍스트 */
+    --text-mid:     #2E7A5F;   /* 중간 텍스트 */
+    --muted:        #7DAF97;   /* 보조 텍스트 */
+    --alarm-color:  #135E4B;   /* 알람 강조 */
+    --alarm-bg:     #4CB572;
+    --danger:       #2E7A5F;
+    --shadow:       rgba(19, 94, 75, 0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans KR', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 60px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* 배경 텍스처: 아주 연한 점선 격자 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(19,94,75,0.07) 1px, transparent 1px);
+    background-size: 28px 28px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* 좌측 수직 장식선 */
+  body::after {
+    content: '';
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: linear-gradient(to bottom, var(--accent), var(--accent-mid), transparent);
+    z-index: 0;
+  }
+
+  .wrapper {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 640px;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid var(--border);
+  }
+
+  .logo-block {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 42px;
+    letter-spacing: 6px;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .logo-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .accuracy-badge {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 2px;
+  }
+
+  .accuracy-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: all 0.4s;
+  }
+
+  .accuracy-dot.ok {
+    background: var(--accent-mid);
+    box-shadow: 0 0 6px rgba(76,181,114,0.5);
+  }
+
+  /* ── Alarm ringing banner ───────────────────────────────── */
+  .alarm-ringing-banner {
+    display: none;
+    background: var(--accent);
+    color: #F2F7F6;
+    padding: 14px 24px;
+    margin-bottom: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-align: center;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+    animation: banner-pulse 0.8s infinite;
+  }
+
+  .alarm-ringing-banner.show { display: block; }
+
+  @keyframes banner-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.003); }
+  }
+
+  /* ── Main Display ───────────────────────────────────────── */
+  .display-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 36px 40px 28px;
+    margin-bottom: 20px;
+    position: relative;
+    box-shadow: 0 4px 24px var(--shadow), 0 1px 0 rgba(255,255,255,0.8) inset;
+  }
+
+  /* 상단 강조 바 */
+  .display-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(to right, var(--accent), var(--accent-mid));
+    border-radius: 4px 4px 0 0;
+  }
+
+  .time-display {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: clamp(52px, 12vw, 90px);
+    letter-spacing: 2px;
+    text-align: center;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 6px;
+    /* 숫자 가독성을 위한 미묘한 텍스트 그림자 */
+    text-shadow: 0 2px 8px rgba(19,94,75,0.15);
+  }
+
+  .time-display.alarm-ring {
+    animation: ring-flash 0.6s infinite;
+  }
+
+  @keyframes ring-flash {
+    0%, 100% { color: var(--accent); }
+    50% { color: var(--accent-mid); text-shadow: 0 2px 16px rgba(76,181,114,0.4); }
+  }
+
+  .ms-display {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 22px;
+    text-align: center;
+    color: var(--muted);
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+  }
+
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: all 0.3s;
+  }
+
+  .status-dot.running {
+    background: var(--accent-mid);
+    box-shadow: 0 0 0 3px rgba(76,181,114,0.2);
+    animation: pulse-dot 1.2s infinite;
+  }
+
+  .status-dot.alarm {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(19,94,75,0.2);
+    animation: none;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(76,181,114,0.2); }
+    50%       { box-shadow: 0 0 0 6px rgba(76,181,114,0.05); }
+  }
+
+  .next-alarm-info {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-align: right;
+  }
+
+  .next-alarm-info span { color: var(--accent); font-weight: 500; }
+
+  /* ── Controls ───────────────────────────────────────────── */
+  .controls {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+
+  .btn {
+    padding: 15px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-mid);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.18s;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn span { position: relative; z-index: 1; }
+
+  .btn:hover {
+    background: var(--accent-light);
+    border-color: var(--accent-mid);
+    color: var(--accent);
+  }
+
+  .btn:active { transform: translateY(1px); }
+
+  /* 시작 버튼: 가장 강조 */
+  .btn-start {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-size: 14px;
+    letter-spacing: 3px;
+    background: rgba(19,94,75,0.05);
+  }
+
+  .btn-start:hover {
+    background: var(--accent);
+    color: var(--surface);
+    border-color: var(--accent);
+  }
+
+  .btn-start.active {
+    background: var(--accent);
+    color: var(--surface);
+    border-color: var(--accent);
+  }
+
+  .btn-start.active:hover {
+    background: #0e4a3b;
+    border-color: #0e4a3b;
+  }
+
+  .btn-reset {
+    border-color: var(--border);
+    color: var(--muted);
+  }
+
+  .btn-reset:hover {
+    background: rgba(19,94,75,0.08);
+    border-color: var(--accent-mid);
+    color: var(--accent);
+  }
+
+  /* ── Section title ──────────────────────────────────────── */
+  .section-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title::before {
+    content: '';
+    width: 3px; height: 12px;
+    background: var(--accent-mid);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Alarm Panel ────────────────────────────────────────── */
+  .alarm-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+
+  .alarm-input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .time-input-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 10px;
+    transition: border-color 0.15s;
+  }
+
+  .time-input-group:focus-within {
+    border-color: var(--accent);
+    background: rgba(242,247,246,0.8);
+  }
+
+  .time-field {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 22px;
+    width: 46px;
+    text-align: center;
+    padding: 10px 2px;
+    outline: none;
+  }
+
+  /* 숫자 스피너 숨김 */
+  .time-field::-webkit-outer-spin-button,
+  .time-field::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .time-field[type=number] { -moz-appearance: textfield; }
+
+  .time-sep {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 20px;
+    color: var(--border-mid);
+    padding: 0 2px;
+  }
+
+  .time-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-align: center;
+    margin-top: 2px;
+  }
+
+  .btn-add {
+    padding: 0 18px;
+    border: 1px solid var(--accent);
+    background: rgba(19,94,75,0.06);
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    border-radius: 3px;
+  }
+
+  .btn-add:hover {
+    background: var(--accent);
+    color: var(--surface);
+  }
+
+  /* 레이블 입력 (추가 전) */
+  .label-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .label-input-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 12px;
+    transition: border-color 0.15s;
+  }
+
+  .label-input-wrap:focus-within { border-color: var(--accent-mid); }
+
+  .label-icon {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .label-field {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    padding: 9px 0;
+    outline: none;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .label-field::placeholder { color: var(--muted); font-size: 12px; }
+
+  /* ── Alarm list ─────────────────────────────────────────── */
+  .alarm-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .alarm-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .alarm-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+
+  .alarm-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+
+  /* 인라인 레이블 편집 필드 */
+  .alarm-label-edit {
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed transparent;
+    color: var(--muted);
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+    padding: 1px 2px;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.15s, color 0.15s;
+    cursor: text;
+  }
+
+  .alarm-label-edit:hover { border-bottom-color: var(--border-mid); }
+  .alarm-label-edit:focus { border-bottom-color: var(--accent-mid); color: var(--text-mid); }
+  .alarm-label-edit::placeholder { color: var(--border-mid); font-style: italic; font-size: 11px; }
+  .alarm-label-edit.has-value { color: var(--text-mid); }
+
+  .alarm-item::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--border);
+    transition: background 0.2s;
+  }
+
+  .alarm-item.triggered {
+    border-color: var(--accent-light);
+    background: rgba(161,216,181,0.15);
+  }
+
+  .alarm-item.triggered::before { background: var(--accent-mid); }
+
+  .alarm-item.next-up {
+    border-color: var(--accent);
+    background: rgba(19,94,75,0.04);
+  }
+
+  .alarm-item.next-up::before { background: var(--accent); }
+
+  .alarm-time {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 20px;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .alarm-badge {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 3px 8px;
+    border-radius: 2px;
+  }
+
+  .badge-triggered {
+    background: rgba(76,181,114,0.15);
+    color: var(--accent);
+    border: 1px solid rgba(76,181,114,0.4);
+  }
+
+  .badge-next {
+    background: rgba(19,94,75,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(19,94,75,0.3);
+  }
+
+  .badge-pending {
+    color: var(--muted);
+    border: 1px solid var(--border);
+    background: transparent;
+  }
+
+  .btn-remove {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s;
+    font-family: monospace;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .btn-remove:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(19,94,75,0.06);
+  }
+
+  /* ── Lap panel ──────────────────────────────────────────── */
+  .laps-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    max-height: 240px;
+    overflow-y: auto;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+
+  .laps-panel::-webkit-scrollbar { width: 4px; }
+  .laps-panel::-webkit-scrollbar-track { background: var(--bg); }
+  .laps-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .lap-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(161,216,181,0.5);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+  }
+
+  .lap-item:last-child { border-bottom: none; }
+  .lap-num { color: var(--muted); letter-spacing: 1px; }
+  .lap-time { color: var(--text); }
+  .lap-split { color: var(--accent-mid); font-size: 11px; }
+
+  .empty-laps {
+    text-align: center;
+    color: var(--muted);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    padding: 16px;
+  }
+
+  /* ── Toast ──────────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    background: var(--accent);
+    color: var(--surface);
+    padding: 14px 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    z-index: 100;
+    transform: translateX(120%);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    max-width: 280px;
+    border-radius: 3px;
+    box-shadow: 0 4px 20px rgba(19,94,75,0.25);
+  }
+
+  .toast.show { transform: translateX(0); }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <header>
+    <div class="logo-block">
+      <div class="logo">AEL</div>
+      <div class="logo-sub">Alarm Stopwatch</div>
+    </div>
+    <div class="accuracy-badge">
+      <div class="accuracy-dot" id="workerDot"></div>
+      <span id="workerLabel">초기화중</span>
+    </div>
+  </header>
+
+  <div class="alarm-ringing-banner" id="ringingBanner">⚠ 알람! 클릭해서 끄기 ⚠</div>
+
+  <div class="display-panel">
+    <div class="time-display" id="timeDisplay">00:00:00</div>
+    <div class="ms-display" id="msDisplay">.000</div>
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">대기중</span>
+      </div>
+      <div class="next-alarm-info" id="nextAlarmInfo">—</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-start" id="startBtn" onclick="toggleStart()"><span>▶ 시작</span></button>
+    <button class="btn btn-lap" onclick="addLap()"><span>랩</span></button>
+    <button class="btn btn-reset" onclick="resetAll()"><span>리셋</span></button>
+  </div>
+
+  <div class="section-title">알람 설정</div>
+  <div class="alarm-panel">
+    <div class="alarm-input-row">
+      <div class="time-input-group">
+        <div>
+          <input class="time-field" id="alarmH" type="number" min="0" max="99" value="0">
+          <div class="time-label">시</div>
+        </div>
+        <div class="time-sep">:</div>
+        <div>
+          <input class="time-field" id="alarmM" type="number" min="0" max="59" value="20">
+          <div class="time-label">분</div>
+        </div>
+        <div class="time-sep">:</div>
+        <div>
+          <input class="time-field" id="alarmS" type="number" min="0" max="59" value="0">
+          <div class="time-label">초</div>
+        </div>
+      </div>
+      <button class="btn-add" onclick="addAlarm()">+ 추가</button>
+    </div>
+    <div class="label-input-row">
+      <div class="label-input-wrap">
+        <span class="label-icon">LABEL</span>
+        <input class="label-field" id="alarmLabel" type="text" maxlength="30" placeholder="선택사항">
+      </div>
+    </div>
+    <div class="alarm-list" id="alarmList"></div>
+  </div>
+
+  <div class="section-title">랩 기록</div>
+  <div class="laps-panel">
+    <div class="empty-laps" id="emptyLaps">기록 없음 — 랩 버튼을 눌러 기록</div>
+    <div id="lapList"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// Web Worker (인라인 Blob) — 백그라운드 탭 정확도 보장
+// ═══════════════════════════════════════════════════════════════
+const WORKER_SRC = `
+  let timer = null;
+  self.onmessage = ({ data }) => {
+    if (data === 'start') {
+      if (timer) return;
+      timer = setInterval(() => self.postMessage('tick'), 50);
+    } else if (data === 'stop') {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+`;
+
+let worker = null;
+let useWorker = false;
+
+try {
+  const blob = new Blob([WORKER_SRC], { type: 'application/javascript' });
+  worker = new Worker(URL.createObjectURL(blob));
+  worker.onmessage = ({ data }) => {
+    if (data === 'tick' && running) {
+      elapsed = Date.now() - wallStartTime;
+      updateDisplay(elapsed);
+      checkAlarms(elapsed);
+    }
+  };
+  worker.onerror = () => { useWorker = false; setAccuracyBadge(false); };
+  useWorker = true;
+  setAccuracyBadge(true);
+} catch(e) { setAccuracyBadge(false); }
+
+function setAccuracyBadge(ok) {
+  document.getElementById('workerDot').classList.toggle('ok', ok);
+  document.getElementById('workerLabel').textContent = ok ? 'BG 정확도 ✓' : 'RAF 모드';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════
+let running = false;
+let wallStartTime = 0;
+let elapsed = 0;
+let rafId = null;
+let alarms = [];
+let alarmIdCounter = 0;
+let laps = [];
+let lastLapMs = 0;
+let ringingAlarms = new Set();
+let audioCtx = null;
+let alarmSoundTimer = null;
+
+// ─── Audio ───────────────────────────────────────────────────
+function getCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playBeep() {
+  try {
+    const ctx = getCtx();
+    [0, 200, 400, 600, 800].forEach((delay, i) => {
+      setTimeout(() => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.setValueAtTime(i % 2 ? 660 : 880, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(i % 2 ? 880 : 660, ctx.currentTime + 0.15);
+        g.gain.setValueAtTime(0.35, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+        o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.18);
+      }, delay);
+    });
+  } catch(e) {}
+}
+
+function startAlarmSound() { playBeep(); alarmSoundTimer = setInterval(playBeep, 2000); }
+function stopAlarmSound()  { clearInterval(alarmSoundTimer); alarmSoundTimer = null; }
+
+// ─── Formatting ──────────────────────────────────────────────
+const pad = n => String(n).padStart(2, '0');
+
+function formatTime(ms) {
+  const t = Math.floor(Math.max(ms, 0) / 1000);
+  return `${pad(Math.floor(t/3600))}:${pad(Math.floor((t%3600)/60))}:${pad(t%60)}`;
+}
+
+function formatMs(ms) {
+  return '.' + String(Math.floor(Math.max(ms,0)) % 1000).padStart(3,'0');
+}
+
+function msToLabel(ms) {
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
+  const p = [];
+  if (h) p.push(`${h}시간`);
+  if (m) p.push(`${m}분`);
+  if (s || !p.length) p.push(`${s}초`);
+  return p.join(' ');
+}
+
+// ─── Timer ───────────────────────────────────────────────────
+function toggleStart() { running ? pause() : start(); }
+
+function start() {
+  try { getCtx().resume(); } catch(e) {}
+  running = true;
+  wallStartTime = Date.now() - elapsed;
+  if (useWorker) worker.postMessage('start');
+  rafLoop();
+  document.getElementById('startBtn').innerHTML = '<span>⏸ 일시정지</span>';
+  document.getElementById('startBtn').classList.add('active');
+  document.getElementById('statusDot').classList.add('running');
+  document.getElementById('statusText').textContent = '실행중';
+}
+
+function pause() {
+  running = false;
+  if (useWorker) worker.postMessage('stop');
+  cancelAnimationFrame(rafId);
+  document.getElementById('startBtn').innerHTML = '<span>▶ 재개</span>';
+  document.getElementById('startBtn').classList.remove('active');
+  document.getElementById('statusDot').classList.remove('running');
+  document.getElementById('statusText').textContent = '일시정지';
+}
+
+function resetAll() {
+  running = false;
+  if (useWorker) worker.postMessage('stop');
+  cancelAnimationFrame(rafId);
+  elapsed = 0; wallStartTime = 0; lastLapMs = 0;
+  laps = []; ringingAlarms.clear();
+  stopAlarmSound();
+  alarms.forEach(a => a.triggered = false);
+  document.getElementById('startBtn').innerHTML = '<span>▶ 시작</span>';
+  document.getElementById('startBtn').classList.remove('active');
+  document.getElementById('statusDot').classList.remove('running','alarm');
+  document.getElementById('statusText').textContent = '대기중';
+  document.getElementById('timeDisplay').classList.remove('alarm-ring');
+  document.getElementById('ringingBanner').classList.remove('show');
+  updateDisplay(0);
+  renderAlarms();
+  renderLaps();
+}
+
+function rafLoop() {
+  if (!running) return;
+  elapsed = Date.now() - wallStartTime;
+  updateDisplay(elapsed);
+  if (!useWorker) checkAlarms(elapsed);
+  rafId = requestAnimationFrame(rafLoop);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && running) {
+    elapsed = Date.now() - wallStartTime;
+    updateDisplay(elapsed);
+    checkAlarms(elapsed);
+    cancelAnimationFrame(rafId);
+    rafLoop();
+  }
+});
+
+// ─── Display ─────────────────────────────────────────────────
+function updateDisplay(ms) {
+  document.getElementById('timeDisplay').textContent = formatTime(ms);
+  document.getElementById('msDisplay').textContent = formatMs(ms);
+  updateNextAlarmInfo(ms);
+}
+
+// ─── Alarm check ─────────────────────────────────────────────
+function checkAlarms(ms) {
+  let anyNew = false;
+  alarms.forEach(a => {
+    if (!a.triggered && ms >= a.ms) {
+      a.triggered = true;
+      ringingAlarms.add(a.id);
+      anyNew = true;
+    }
+  });
+  if (anyNew) {
+    const latest = [...alarms].filter(a => ringingAlarms.has(a.id)).pop();
+    startAlarmSound();
+    document.getElementById('timeDisplay').classList.add('alarm-ring');
+    const banner = document.getElementById('ringingBanner');
+    const labelPart = latest?.label ? ` [${latest.label}]` : '';
+    banner.textContent = `⚠ 알람!${labelPart} ${msToLabel(latest?.ms||0)} 경과 — 클릭해서 끄기 ⚠`;
+    banner.classList.add('show');
+    document.getElementById('statusDot').classList.add('alarm');
+    showToast(`⏱ 알람!${labelPart} ${msToLabel(latest?.ms||0)} 경과`);
+    renderAlarms();
+  }
+}
+
+function dismissAlarm() {
+  ringingAlarms.clear();
+  stopAlarmSound();
+  document.getElementById('timeDisplay').classList.remove('alarm-ring');
+  document.getElementById('ringingBanner').classList.remove('show');
+  document.getElementById('statusDot').classList.remove('alarm');
+  if (running) document.getElementById('statusDot').classList.add('running');
+  renderAlarms();
+}
+
+document.getElementById('ringingBanner').addEventListener('click', dismissAlarm);
+
+function updateNextAlarmInfo(ms) {
+  const pending = alarms.filter(a => !a.triggered).sort((a,b) => a.ms-b.ms);
+  const el = document.getElementById('nextAlarmInfo');
+  if (!pending.length) { el.innerHTML = '다음 알람 없음'; return; }
+  const diff = Math.max(0, pending[0].ms - ms);
+  el.innerHTML = `다음 <span>${msToLabel(pending[0].ms)}</span> (${formatTime(diff)} 후)`;
+}
+
+// ─── Alarm management ────────────────────────────────────────
+function addAlarm() {
+  const h = parseInt(document.getElementById('alarmH').value)||0;
+  const m = parseInt(document.getElementById('alarmM').value)||0;
+  const s = parseInt(document.getElementById('alarmS').value)||0;
+  const label = document.getElementById('alarmLabel').value.trim();
+  const totalMs = (h*3600 + m*60 + s) * 1000;
+  if (totalMs <= 0) { showToast('알람 시간을 입력해주세요'); return; }
+  if (alarms.some(a => a.ms === totalMs)) { showToast('이미 추가된 시간입니다'); return; }
+  alarms.push({ ms: totalMs, label, triggered: elapsed > 0 && totalMs <= elapsed, id: ++alarmIdCounter });
+  alarms.sort((a,b) => a.ms-b.ms);
+  document.getElementById('alarmLabel').value = '';
+  renderAlarms();
+  updateNextAlarmInfo(elapsed);
+}
+
+function removeAlarm(id) {
+  alarms = alarms.filter(a => a.id !== id);
+  ringingAlarms.delete(id);
+  if (!ringingAlarms.size && alarmSoundTimer) {
+    stopAlarmSound();
+    document.getElementById('timeDisplay').classList.remove('alarm-ring');
+    document.getElementById('ringingBanner').classList.remove('show');
+  }
+  renderAlarms();
+  updateNextAlarmInfo(elapsed);
+}
+
+function renderAlarms() {
+  const list = document.getElementById('alarmList');
+  if (!alarms.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--muted);font-family:\'Share Tech Mono\',monospace;font-size:11px;letter-spacing:2px;padding:14px 0;">알람 없음 — 위에서 추가하세요</div>';
+    return;
+  }
+  const nextId = alarms.filter(a => !a.triggered).sort((a,b) => a.ms-b.ms)[0]?.id;
+  list.innerHTML = alarms.map(a => {
+    const ringing = ringingAlarms.has(a.id);
+    const isNext = !a.triggered && a.id === nextId;
+    const [bc, bt] = ringing         ? ['badge-triggered','🔔 알람!'] :
+                     a.triggered      ? ['badge-triggered','✓ 완료'] :
+                     isNext           ? ['badge-next','다음'] : ['badge-pending','대기'];
+    const labelVal = a.label || '';
+    return `<div class="alarm-item ${a.triggered?'triggered':''} ${isNext&&!a.triggered?'next-up':''}">
+      <div class="alarm-main">
+        <div class="alarm-info">
+          <div class="alarm-time">${formatTime(a.ms)}</div>
+          <input
+            class="alarm-label-edit ${labelVal ? 'has-value' : ''}"
+            type="text"
+            maxlength="30"
+            value="${labelVal.replace(/"/g,'&quot;')}"
+            placeholder="레이블 입력..."
+            oninput="updateLabel(${a.id}, this.value)"
+          >
+        </div>
+        <span class="alarm-badge ${bc}">${bt}</span>
+      </div>
+      <button class="btn-remove" onclick="removeAlarm(${a.id})" title="삭제">×</button>
+    </div>`;
+  }).join('');
+}
+
+function updateLabel(id, value) {
+  const alarm = alarms.find(a => a.id === id);
+  if (alarm) {
+    alarm.label = value.trim();
+    // has-value 클래스 실시간 반영
+    const input = document.querySelector(`[oninput="updateLabel(${id}, this.value)"]`);
+    if (input) input.classList.toggle('has-value', !!alarm.label);
+  }
+}
+
+// ─── Laps ────────────────────────────────────────────────────
+function addLap() {
+  if (!running && elapsed === 0) return;
+  laps.unshift({ num: laps.length+1, time: elapsed, split: elapsed-lastLapMs });
+  lastLapMs = elapsed;
+  renderLaps();
+}
+
+function renderLaps() {
+  const el = document.getElementById('lapList');
+  const empty = document.getElementById('emptyLaps');
+  if (!laps.length) { empty.style.display='block'; el.innerHTML=''; return; }
+  empty.style.display = 'none';
+  el.innerHTML = laps.map(l => `
+    <div class="lap-item">
+      <span class="lap-num">LAP ${String(l.num).padStart(2,'0')}</span>
+      <span class="lap-time">${formatTime(l.time)}</span>
+      <span class="lap-split">+${formatTime(l.split)}</span>
+    </div>`).join('');
+}
+
+// ─── Toast ───────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ─── Init ────────────────────────────────────────────────────
+window.onload = () => {
+  const defaults = [[0,20,0,'set 1 - 1'],[0,40,0,'set 1 - 2'],[1,0,0,'set 1 - 3']];
+  defaults.forEach(([h,m,s,lbl]) => {
+    document.getElementById('alarmH').value = h;
+    document.getElementById('alarmM').value = m;
+    document.getElementById('alarmS').value = s;
+    document.getElementById('alarmLabel').value = lbl;
+    addAlarm();
+  });
+  document.getElementById('alarmH').value = 0;
+  document.getElementById('alarmM').value = 20;
+  document.getElementById('alarmS').value = 0;
+  document.getElementById('alarmLabel').value = '';
+};
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); toggleStart(); }
+  if (e.code === 'KeyL') addLap();
+  if (e.code === 'KeyR') resetAll();
+  if (e.code === 'Escape') dismissAlarm();
+});
+</script>
+</body>
+</html>
