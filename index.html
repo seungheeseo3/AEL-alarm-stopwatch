@@ -821,7 +821,11 @@ function playBeep() {
   } catch(e) {}
 }
 
-function startAlarmSound() { playBeep(); alarmSoundTimer = setInterval(playBeep, 2000); }
+function startAlarmSound() {
+  clearInterval(alarmSoundTimer); // 이전 알람 타이머가 남아있으면 먼저 정리
+  playBeep();
+  alarmSoundTimer = setInterval(playBeep, 2000);
+}
 function stopAlarmSound()  { clearInterval(alarmSoundTimer); alarmSoundTimer = null; }
 
 // ─── Formatting ──────────────────────────────────────────────
